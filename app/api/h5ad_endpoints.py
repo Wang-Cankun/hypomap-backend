@@ -681,15 +681,43 @@ async def get_ccc_interactions(dataset_id: str):
 
 
 @router.get("/{dataset_id}/ccc/network")
-async def get_ccc_network(dataset_id: str):
+async def get_ccc_network(
+    dataset_id: str,
+    pathway: Optional[str] = Query(None, description="Filter by pathway name"),
+    min_prob: float = Query(0, description="Minimum probability threshold"),
+    source_cluster: Optional[str] = Query(None, description="Filter by source cluster"),
+    target_cluster: Optional[str] = Query(None, description="Filter by target cluster")
+):
     """
-    Get CCC network structure
-    
-    Returns a simplified network representation of cell-cell communication interactions.
+    Get CCC network structure for visualization
+
+    First tries to load from precomputed CSV (CellChat format), then falls back to h5ad.
+    Returns nodes and edges for vis-network visualization.
+
+    Args:
+        dataset_id: Dataset identifier
+        pathway: Filter by pathway name (optional)
+        min_prob: Minimum probability threshold (default: 0)
+        source_cluster: Filter by source cluster (optional)
+        target_cluster: Filter by target cluster (optional)
     """
     try:
+        # Try to load from CSV first (CellChat format)
+        try:
+            data = h5ad_service.get_ccc_network_from_csv(
+                dataset_id,
+                pathway=pathway,
+                min_prob=min_prob,
+                source_cluster=source_cluster,
+                target_cluster=target_cluster
+            )
+            return data
+        except ValueError:
+            pass  # CSV not found, try h5ad
+
+        # Fallback to h5ad
         data = h5ad_service.get_ccc_interactions(dataset_id)
-        
+
         # Extract network structure
         network = {
             "ligands": data.get("ligands", []),
@@ -697,7 +725,7 @@ async def get_ccc_network(dataset_id: str):
             "cell_types": data.get("cell_types", []),
             "interactions": data.get("interactions", [])
         }
-        
+
         return network
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
@@ -705,6 +733,49 @@ async def get_ccc_network(dataset_id: str):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting CCC network: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{dataset_id}/regulon/network")
+async def get_regulon_network(
+    dataset_id: str,
+    cluster: str = Query('0', description="Cluster number"),
+    tf: Optional[str] = Query(None, description="Filter by specific TF"),
+    max_targets: int = Query(100, ge=10, le=500, description="Maximum targets per TF")
+):
+    """
+    Get Regulon TF-target network for visualization
+
+    Loads from precomputed CSV files in the regulon/ directory.
+    Returns nodes and edges for vis-network visualization.
+
+    Args:
+        dataset_id: Dataset identifier
+        cluster: Cluster number (default: '0')
+        tf: Filter by specific transcription factor (optional)
+        max_targets: Maximum number of targets per TF (default: 100)
+
+    Returns:
+        - nodes: TF and target gene nodes
+        - edges: TF -> target relationships
+        - tfs: List of available TFs sorted by target count
+        - tf_stats: Target count per TF
+        - available_clusters: List of available cluster files
+    """
+    try:
+        data = h5ad_service.get_regulon_network_from_csv(
+            dataset_id,
+            cluster=cluster,
+            tf=tf,
+            max_targets=max_targets
+        )
+        return data
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting regulon network: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

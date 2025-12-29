@@ -1578,3 +1578,197 @@ class H5ADService:
             "image_shape": sample_info.get("image_shapes", {}).get(image_key, None)
         }
 
+    def get_ccc_network_from_csv(self, dataset_id: str, pathway: Optional[str] = None,
+                                   min_prob: float = 0, source_cluster: Optional[str] = None,
+                                   target_cluster: Optional[str] = None) -> Dict:
+        """
+        Get CCC network data from precomputed CSV file (CellChat format)
+
+        The CSV should have columns: source, target, ligand, receptor, prob, pval,
+        interaction_name, interaction_name_2, pathway_name, annotation, evidence
+
+        Args:
+            dataset_id: Dataset identifier
+            pathway: Filter by pathway name (optional)
+            min_prob: Minimum probability threshold
+            source_cluster: Filter by source cluster (optional)
+            target_cluster: Filter by target cluster (optional)
+
+        Returns: {
+            "nodes": [{"id": "C0", "label": "C0", "group": "C0"}, ...],
+            "edges": [{"from": "C0", "to": "C1", "ligand": "...", "receptor": "...",
+                       "pathway": "...", "prob": 0.1, ...}, ...]
+        }
+        """
+        cache_key = f"{dataset_id}:ccc_csv:{pathway}:{min_prob}:{source_cluster}:{target_cluster}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        # Check for CSV file
+        ccc_csv_file = self.get_precomputed_dir(dataset_id) / "ccc" / "communications.csv"
+
+        if not ccc_csv_file.exists():
+            raise ValueError(f"CCC CSV file not found at {ccc_csv_file}")
+
+        # Load CSV
+        logger.info(f"Loading CCC data from CSV for {dataset_id}")
+        df = pd.read_csv(ccc_csv_file)
+
+        # Apply filters
+        if pathway and pathway != 'all':
+            df = df[df['pathway_name'] == pathway]
+
+        if min_prob > 0:
+            df = df[df['prob'] >= min_prob]
+
+        if source_cluster:
+            df = df[df['source'] == source_cluster]
+
+        if target_cluster:
+            df = df[df['target'] == target_cluster]
+
+        # Build nodes and edges
+        nodes_set = set()
+        edges = []
+
+        for _, row in df.iterrows():
+            source = row['source']
+            target = row['target']
+            nodes_set.add(source)
+            nodes_set.add(target)
+
+            edges.append({
+                "from": source,
+                "to": target,
+                "ligand": row.get('ligand', ''),
+                "receptor": row.get('receptor', ''),
+                "pathway": row.get('pathway_name', ''),
+                "prob": float(row.get('prob', 0)) if pd.notna(row.get('prob')) else 0,
+                "pval": float(row.get('pval', 1)) if pd.notna(row.get('pval')) else 1,
+                "interaction_name": row.get('interaction_name', ''),
+                "annotation": row.get('annotation', ''),
+                "evidence": row.get('evidence', '')
+            })
+
+        nodes = [{"id": n, "label": n, "group": n} for n in sorted(nodes_set)]
+
+        # Get unique pathways for filtering
+        pathways = sorted(df['pathway_name'].dropna().unique().tolist())
+
+        result = {
+            "nodes": nodes,
+            "edges": edges,
+            "pathways": pathways,
+            "total_interactions": len(edges)
+        }
+
+        self.cache[cache_key] = result
+        return result
+
+    def get_regulon_network_from_csv(self, dataset_id: str, cluster: str = '0',
+                                      tf: Optional[str] = None, max_targets: int = 100) -> Dict:
+        """
+        Get Regulon TF-target network data from precomputed CSV files
+
+        CSV files should be named: Cluster_cluster_{n}_regulon_network.csv
+        Each CSV has columns: TF, Target
+
+        Args:
+            dataset_id: Dataset identifier
+            cluster: Cluster number (default '0')
+            tf: Filter by specific transcription factor (optional)
+            max_targets: Maximum number of targets per TF
+
+        Returns: {
+            "nodes": [{"id": "TF1", "label": "TF1", "type": "tf"},
+                      {"id": "GENE1", "label": "GENE1", "type": "target"}, ...],
+            "edges": [{"tf": "TF1", "target": "GENE1"}, ...],
+            "tfs": ["TF1", "TF2", ...],
+            "available_clusters": ["0", "1", ...]
+        }
+        """
+        cache_key = f"{dataset_id}:regulon:{cluster}:{tf}:{max_targets}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        regulon_dir = self.get_precomputed_dir(dataset_id) / "regulon"
+
+        if not regulon_dir.exists():
+            raise ValueError(f"Regulon directory not found at {regulon_dir}")
+
+        # Find available cluster files
+        cluster_files = list(regulon_dir.glob("Cluster_cluster_*_regulon_network.csv"))
+        available_clusters = []
+        for f in cluster_files:
+            # Extract cluster number from filename
+            match = f.stem.replace("Cluster_cluster_", "").replace("_regulon_network", "")
+            available_clusters.append(match)
+
+        available_clusters = sorted(available_clusters, key=lambda x: int(x) if x.isdigit() else x)
+
+        # Load specific cluster file
+        cluster_file = regulon_dir / f"Cluster_cluster_{cluster}_regulon_network.csv"
+
+        if not cluster_file.exists():
+            # Try without the "Cluster_" prefix
+            cluster_file = regulon_dir / f"cluster_{cluster}_regulon_network.csv"
+
+        if not cluster_file.exists():
+            raise ValueError(f"Regulon file not found for cluster {cluster}. Available: {available_clusters}")
+
+        logger.info(f"Loading regulon data from CSV for {dataset_id}, cluster {cluster}")
+        df = pd.read_csv(cluster_file)
+
+        # Filter by TF if specified
+        if tf and tf != 'all':
+            df = df[df['TF'] == tf]
+
+        # Build nodes and edges
+        tf_set = set()
+        target_set = set()
+        edges = []
+
+        # Count targets per TF for limiting
+        tf_target_counts = {}
+
+        for _, row in df.iterrows():
+            tf_name = row['TF']
+            target_name = row['Target']
+
+            # Limit targets per TF
+            tf_target_counts[tf_name] = tf_target_counts.get(tf_name, 0) + 1
+            if tf_target_counts[tf_name] > max_targets:
+                continue
+
+            tf_set.add(tf_name)
+            target_set.add(target_name)
+            edges.append({
+                "tf": tf_name,
+                "target": target_name
+            })
+
+        # Build nodes list
+        nodes = []
+        for tf_name in sorted(tf_set):
+            nodes.append({"id": tf_name, "label": tf_name, "type": "tf"})
+        for target_name in sorted(target_set):
+            if target_name not in tf_set:  # Avoid duplicates if a TF is also a target
+                nodes.append({"id": target_name, "label": target_name, "type": "target"})
+
+        # Get TF statistics (total target count before limiting)
+        tf_stats = df.groupby('TF').size().to_dict()
+        tfs = sorted(tf_stats.keys(), key=lambda x: tf_stats[x], reverse=True)
+
+        result = {
+            "nodes": nodes,
+            "edges": edges,
+            "tfs": tfs,
+            "tf_stats": tf_stats,
+            "available_clusters": available_clusters,
+            "cluster": cluster,
+            "total_edges": len(edges)
+        }
+
+        self.cache[cache_key] = result
+        return result
+
