@@ -113,8 +113,8 @@ module.exports = {
     {
       name: "hypomap-backend",
       script: "main.py",
-      interpreter: "/home/YOUR_USER/micromamba/envs/hypomap/bin/python",
-      cwd: "/opt/HypoMap/hypomap-backend",
+      interpreter: "/home/wan268/micromamba/envs/hypomap/bin/python",
+      cwd: "/server/nodejs/hypomap-backend",
       env: {
         HOST: "0.0.0.0",
         PORT: "9120",
@@ -385,7 +385,7 @@ pm2 monit
 ## 11. Updating the Application
 
 ```bash
-cd /opt/HypoMap/hypomap-backend
+cd /server/nodejs/hypomap-backend
 
 # Pull latest code
 git pull origin main
