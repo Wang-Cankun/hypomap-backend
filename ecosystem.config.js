@@ -3,9 +3,8 @@ module.exports = {
     {
       name: "hypomap-backend",
       script: "main.py",
-      // UPDATE THIS PATH to your micromamba Python interpreter
-      interpreter: "/home/YOUR_USER/micromamba/envs/hypomap/bin/python",
-      cwd: "/opt/HypoMap/hypomap-backend",
+      interpreter: "/home/wan268/micromamba/envs/hypomap/bin/python",
+      cwd: "/server/nodejs/hypomap-backend",
       env: {
         HOST: "0.0.0.0",
         PORT: "9120",
@@ -65,11 +64,11 @@ module.exports = {
 
   deploy: {
     production: {
-      user: "YOUR_USER",
-      host: "your-server.com",
+      user: "wan268",
+      host: "bmblx.bmi.osumc.edu",
       ref: "origin/main",
-      repo: "git@github.com:your-org/HypoMap.git",
-      path: "/opt/HypoMap",
+      repo: "git@github.com:Wang-Cankun/hypomap-backend.git",
+      path: "/server/nodejs",
       "pre-deploy-local": "",
       "post-deploy":
         "cd hypomap-backend && pip install -r requirements.txt && pm2 reload ecosystem.config.js --env production",
